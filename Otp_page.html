@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OTP Verification</title>
+
+    <style>
+        body{
+            height:100vh;
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            font-family:Segoe UI, sans-serif;
+            background: linear-gradient(to right bottom,#e3d1ed 0%,#b39ac2 50%,#b39ac2 100%);
+        }
+
+        .box{
+            background:#c59ddd;
+            padding-top:20px;
+            border:0.5px solid black;
+            border-radius:10px;
+            box-shadow:-5px 10px 20px rgba(0,0,0,0.5);
+            width:300px;
+            height: 200px;
+            text-align:center;
+            font-weight:lighter;
+        }
+
+        input{
+            width:80%;
+            padding:10px;
+            margin-bottom:25px;
+            border-radius: 5px;
+            border: #dcd0e3;
+        }
+
+        input[type="submit"]{
+            width: 100px;
+            background-color: #7d2ab1;
+            color: white;
+            font-weight: bold; 
+        }
+
+        input[type="submit"]:hover{
+            opacity:0.9;
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="box">
+        <h3>Enter OTP</h3>
+
+        <form action="/verify-otp" method="POST">
+            <input type="text" name="otp" placeholder="6 digit OTP" required>
+            <input type="submit" value="Verify">
+        </form>
+    </div>
+</body>
+</html>

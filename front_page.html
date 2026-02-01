@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Smart Webcam</title>
+
+    <style>
+        body{
+            height:100vh;
+            display:flex;
+            flex-direction:column;
+            justify-content:center;
+            align-items:center;
+            background:linear-gradient(135deg,#9841ce,#cab2d9);
+            font-family:Segoe UI, sans-serif;
+            overflow:hidden;
+        }
+
+        #title{
+            font-size:70px;
+            font-weight:800;
+            color:white;
+            letter-spacing:3px;
+            white-space:nowrap;
+        }
+
+        .letter{
+            display:inline-block;
+        }
+
+        button{
+            margin-top:50px;
+            padding:14px 30px;
+            font-size:18px;
+            border:none;
+            border-radius:30px;
+            cursor:pointer;
+            background:white;
+            color: #080808;
+            transition: all 0.5s;
+        }
+
+        button:hover{
+            transform: translateY(-5px);
+            background-color: #9841ce;
+            box-shadow: 0px 0px 10px #5c5c5c;
+            
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1 id="title">Smart Webcam</h1>
+    
+
+    <button id="enterBtn">Continue</button>
+
+
+    <!-- GSAP -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+
+    <script>
+        const title = document.getElementById("title");
+        const btn = document.getElementById("enterBtn");
+
+        // 🔹 Split letters
+        title.innerHTML = title.textContent
+            .split("")
+            .map(l => l === " " 
+                    ? `<span class="letter">&nbsp;</span>` 
+                    : `<span class="letter">${l}</span>`)
+            .join("");
+
+        const letters = document.querySelectorAll(".letter");
+
+
+        // ======================
+        // ENTRY ANIMATION
+        // ======================
+        gsap.from(letters, {
+            y: 500,        
+            opacity: 0,
+            duration: 1,
+            stagger: 0.1,
+            ease: "power4.out"
+        });
+
+
+        // ======================
+        // EXIT ANIMATION
+        // ======================
+        btn.addEventListener("click", () => {
+
+            const tl = gsap.timeline({
+                onComplete: () => {
+                    window.location.href = "/login"; // next page
+                }
+            });
+
+            tl.to(letters, {
+                y: -500,       
+                opacity: 0,
+                duration: 1,
+                stagger: 0.05,
+                ease: "power4.in"
+            });
+        });
+
+    </script>
+
+</body>
+</html>
