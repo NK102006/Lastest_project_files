@@ -1,0 +1,16 @@
+[project]
+name = "smart-webcam"
+version = "1.0.0"
+description = "Smart Webcam Attendance System with AI"
+requires-python = ">=3.10"
+dependencies = [
+    "flask",
+    "flask-socketio",
+    "opencv-python",
+    "mediapipe>=0.10.9,<0.10.21",
+    "SpeechRecognition",
+    "groq",
+    "numpy",
+    "python-dotenv",
+    "pyaudio",
+]

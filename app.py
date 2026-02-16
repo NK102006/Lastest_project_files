@@ -9,8 +9,8 @@ import threading
 import time
 from datetime import datetime, date,timedelta
 import queue
+from collections import deque
 from flask_socketio import SocketIO, emit
-from groq import Groq
 import numpy as np  
 import math
 import random
@@ -21,7 +21,23 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
 load_dotenv()
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
+_groq_client = None
+def get_groq_client():
+    global _groq_client
+    if _groq_client is None:
+        try:
+            from groq import Groq
+            api_key = os.environ.get("GROQ_API_KEY")
+            if not api_key:
+                print("GROQ_API_KEY not set — AI chat will be unavailable")
+                return None
+            _groq_client = Groq(api_key=api_key)
+        except Exception as e:
+            print(f"Groq init error: {e}")
+            return None
+    return _groq_client
+
 otp_storage = {}
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 logging.getLogger('absl').setLevel(logging.ERROR)
@@ -194,12 +210,21 @@ camera.set(cv2.CAP_PROP_FRAME_WIDTH, DISPLAY_WIDTH)
 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, DISPLAY_HEIGHT)
 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-smile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_smile.xml')
-eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(min_detection_confidence=0.7)
 mp_draw = mp.solutions.drawing_utils
+
+# FaceMesh for expression detection via blendshapes
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    static_image_mode=False,
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+    output_face_blendshapes=True
+)
 
 # Global state
 face_detected = False
@@ -209,6 +234,47 @@ current_filter = "normal"
 filters = ["normal", "bw", "red", "blur", "cartoon"]
 CURRENT_USERID='' 
 attendance_status = "Absent"
+app_start_time = time.time()
+
+# Performance tracking
+PERF_WINDOW = 30  # rolling average over last 30 frames
+frame_perf = {
+    'capture_ms': 0, 'detection_ms': 0, 'filter_ms': 0, 'encode_ms': 0,
+    'total_ms': 0, 'server_fps': 0, 'frame_size_kb': 0,
+    'avg_capture_ms': 0, 'avg_detection_ms': 0, 'avg_filter_ms': 0,
+    'avg_encode_ms': 0, 'avg_total_ms': 0, 'frame_count': 0
+}
+perf_history = {
+    'capture': deque(maxlen=PERF_WINDOW),
+    'detection': deque(maxlen=PERF_WINDOW),
+    'filter': deque(maxlen=PERF_WINDOW),
+    'encode': deque(maxlen=PERF_WINDOW),
+    'total': deque(maxlen=PERF_WINDOW),
+}
+last_fps_time = time.time()
+fps_frame_count = 0
+
+def detect_expression_from_blendshapes(blendshapes):
+    """Map FaceMesh blendshape scores to expression labels."""
+    scores = {}
+    for bs in blendshapes:
+        scores[bs.category_name] = bs.score
+
+    smile_score = scores.get('mouthSmileLeft', 0) + scores.get('mouthSmileRight', 0)
+    brow_down = scores.get('browDownLeft', 0) + scores.get('browDownRight', 0)
+    eye_wide = scores.get('eyeWideLeft', 0) + scores.get('eyeWideRight', 0)
+    jaw_open = scores.get('jawOpen', 0)
+    mouth_frown = scores.get('mouthFrownLeft', 0) + scores.get('mouthFrownRight', 0)
+
+    if smile_score > 0.6:
+        return "Smile 😊"
+    elif eye_wide > 0.8 and jaw_open > 0.5:
+        return "Surprised 😲"
+    elif brow_down > 0.6:
+        return "Angry 😠"
+    elif mouth_frown > 0.5:
+        return "Sad 😞"
+    return "Neutral 😐"
 
 # Your existing functions (fingers_up, detect_gesture, filters - unchanged)
 def fingers_up(hand, hand_label):
@@ -259,41 +325,47 @@ def filter_cartoon(frame):
 
 def generate_frames():
     global face_detected, expression, gesture, current_filter, attendance_status, current_speech_text, is_listening
-    global present_count, absent_count
+    global present_count, absent_count, frame_perf, fps_frame_count, last_fps_time
     today_str = date.today().isoformat()
     session_start = None
     
     while True:
+        t_start = time.perf_counter()
+
+        # --- CAPTURE ---
+        t0 = time.perf_counter()
         success, frame = camera.read()
         if not success:
             break
         frame = cv2.flip(frame, 1)
+        capture_ms = (time.perf_counter() - t0) * 1000
         
         if session_start != today_str:
             present_count = 0
             absent_count = 0
             session_start = today_str
         
+        # --- DETECTION ---
+        t0 = time.perf_counter()
         small_frame = cv2.resize(frame, (DETECT_WIDTH, DETECT_HEIGHT))
         gray_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
         rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
         
+        # Face detection (Haar — for presence/absence)
         faces = face_cascade.detectMultiScale(gray_small, 1.3, 5)
         face_detected = len(faces) > 0
-        expression = "neutral"
         
+        # Draw face rectangles
         for (x, y, w, h) in faces:
             x, y, w, h = int(x*DISPLAY_WIDTH/DETECT_WIDTH), int(y*DISPLAY_HEIGHT/DETECT_HEIGHT), \
                         int(w*DISPLAY_WIDTH/DETECT_WIDTH), int(h*DISPLAY_HEIGHT/DETECT_HEIGHT)
-            roi_gray = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
-            smiles = smile_cascade.detectMultiScale(roi_gray, 1.8, 20)
-            eyes = eye_cascade.detectMultiScale(roi_gray, 1.3, 10)
-
-            if len(smiles)>0: expression = "Smile 😊"
-            elif len(eyes)==0: expression = "Angry 😠"
-            elif len(eyes)==1: expression = "Sad 😞"
-            elif len(eyes)>=2 and h>180: expression = "Stunned 😲"
             cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
+
+        # Expression detection (FaceMesh blendshapes)
+        expression = "Neutral 😐"
+        face_result = face_mesh.process(rgb_small)
+        if face_result.multi_face_landmarks and face_result.face_blendshapes:
+            expression = detect_expression_from_blendshapes(face_result.face_blendshapes[0])
         
         new_status = "Present" if face_detected else "Absent"
         if new_status == "Present":
@@ -309,7 +381,7 @@ def generate_frames():
             if updated:
                 attendance_status = new_status
 
-        # Hand detection (fixed duplicate loop)
+        # Hand detection
         result = hands.process(rgb_small)
         gesture = "none"
         if result.multi_hand_landmarks and result.multi_handedness:
@@ -318,8 +390,10 @@ def generate_frames():
                 gesture = detect_gesture(hand_landmarks, hand_label)
                 gesture = f"{hand_label}:{gesture}"
                 mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+        detection_ms = (time.perf_counter() - t0) * 1000
 
-        # Apply filters
+        # --- FILTER ---
+        t0 = time.perf_counter()
         if current_filter == "bw":
             frame = filter_bw(frame)
         elif current_filter == "red":
@@ -330,10 +404,47 @@ def generate_frames():
             frame = filter_cartoon(frame)
         
         cv2.putText(frame, f"Mic: {'ON' if is_listening else 'OFF'}", (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
-        
+        filter_ms = (time.perf_counter() - t0) * 1000
+
+        # --- ENCODE ---
+        t0 = time.perf_counter()
         _, buffer = cv2.imencode('.jpg', frame)
+        frame_bytes = buffer.tobytes()
+        encode_ms = (time.perf_counter() - t0) * 1000
+
+        total_ms = (time.perf_counter() - t_start) * 1000
+
+        # --- Update perf metrics ---
+        perf_history['capture'].append(capture_ms)
+        perf_history['detection'].append(detection_ms)
+        perf_history['filter'].append(filter_ms)
+        perf_history['encode'].append(encode_ms)
+        perf_history['total'].append(total_ms)
+
+        fps_frame_count += 1
+        elapsed = time.perf_counter() - last_fps_time
+        if elapsed >= 1.0:
+            frame_perf['server_fps'] = round(fps_frame_count / elapsed, 1)
+            fps_frame_count = 0
+            last_fps_time = time.perf_counter()
+
+        frame_perf.update({
+            'capture_ms': round(capture_ms, 1),
+            'detection_ms': round(detection_ms, 1),
+            'filter_ms': round(filter_ms, 1),
+            'encode_ms': round(encode_ms, 1),
+            'total_ms': round(total_ms, 1),
+            'frame_size_kb': round(len(frame_bytes) / 1024, 1),
+            'avg_capture_ms': round(sum(perf_history['capture']) / len(perf_history['capture']), 1) if perf_history['capture'] else 0,
+            'avg_detection_ms': round(sum(perf_history['detection']) / len(perf_history['detection']), 1) if perf_history['detection'] else 0,
+            'avg_filter_ms': round(sum(perf_history['filter']) / len(perf_history['filter']), 1) if perf_history['filter'] else 0,
+            'avg_encode_ms': round(sum(perf_history['encode']) / len(perf_history['encode']), 1) if perf_history['encode'] else 0,
+            'avg_total_ms': round(sum(perf_history['total']) / len(perf_history['total']), 1) if perf_history['total'] else 0,
+            'frame_count': frame_perf.get('frame_count', 0) + 1
+        })
+
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 # Routes
 @app.route('/')
@@ -609,6 +720,22 @@ def speech_records():
     html += '</table></body></html>'
     return html
 
+@app.route('/debug/perf')
+def debug_perf():
+    return jsonify(frame_perf)
+
+@app.route('/debug/health')
+def debug_health():
+    return jsonify({
+        'uptime_seconds': round(time.time() - app_start_time, 1),
+        'camera_open': camera.isOpened(),
+        'current_filter': current_filter,
+        'face_detected': face_detected,
+        'is_listening': is_listening,
+        'frame_count': frame_perf.get('frame_count', 0),
+        'server_fps': frame_perf.get('server_fps', 0)
+    })
+
 @socketio.on('message')
 def handle_message(data):
     user_message = data['message']
@@ -625,6 +752,11 @@ def handle_message(data):
     """
     
     try:
+        client = get_groq_client()
+        if client is None:
+            emit('response', {'message': '⚠️ AI chat unavailable — GROQ_API_KEY not configured.'})
+            return
+
         # Groq API Call for ultra-fast response
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",  # Fastest model for <1s responses
