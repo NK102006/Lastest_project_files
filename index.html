@@ -387,12 +387,130 @@
         @media (max-width: 1024px) {
             .container { 
                 grid-template-columns: 1fr; 
-                grid-template-rows: 2fr 1fr;
-                padding: 15px;
+                gap: 10px;
+                padding: 10px;
+                height: auto;
+                min-height: auto;
+            }
+            .video-section {
                 height: auto;
             }
-            #video-feed { height: 50vh; }
+            .main-video {
+                width: 100%;
+                margin-left: 0;
+                margin-top: 10px;
+            }
+            #video-feed {
+                width: 100%;
+                margin-left: 0;
+                max-height: 50vh;
+            }
+            .controls-section {
+                width: 100%;
+                margin-left: 0;
+                gap: 12px;
+            }
+            .chat-section {
+                height: auto;
+                max-height: 70vh;
+                width: 100%;
+            }
+            .chat-panel {
+                width: 100%;
+                margin-left: 0;
+                margin-top: 10px;
+            }
+            .records-section {
+                width: 100%;
+                margin-left: 0;
+                margin-bottom: 10px;
+            }
+            .status-item {
+                margin-left: 8px;
+            }
         }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 6px;
+                gap: 6px;
+            }
+            .main-video {
+                margin-top: 6px;
+            }
+            #video-feed {
+                max-height: 40vh;
+                border-radius: 15px;
+            }
+            .video-header h1 {
+                font-size: 20px;
+            }
+            .video-header {
+                height: 50px;
+                padding: 14px;
+            }
+            .status-bar {
+                grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+                padding: 6px;
+            }
+            .status-item {
+                height: auto !important;
+                width: auto !important;
+                padding: 8px;
+                margin-left: 4px;
+            }
+            .status-value { font-size: 13px; }
+            .status-label { font-size: 10px; }
+            .controls-section {
+                gap: 10px;
+                padding: 10px;
+            }
+            .speech-section {
+                padding: 15px;
+            }
+            .speech-display {
+                min-height: 50px;
+                padding: 12px;
+            }
+            .speech-btn {
+                padding: 12px 24px;
+                font-size: 14px;
+            }
+            .filter-grid {
+                grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+                gap: 8px;
+            }
+            .filter-btn {
+                height: 40px;
+                font-size: 12px;
+                padding: 8px 6px;
+            }
+            .chat-section {
+                max-height: 60vh;
+            }
+            .chat-header {
+                padding: 12px;
+            }
+            .chat-header h2 {
+                font-size: 18px;
+            }
+            .chat-input {
+                padding: 10px;
+            }
+            #message-input {
+                width: 60%;
+                padding: 12px 14px;
+                font-size: 14px;
+            }
+            #send-btn {
+                padding: 12px 20px;
+                font-size: 14px;
+            }
+            .records-section {
+                padding: 12px;
+            }
+        }
+
         @keyframes speech_button_stop{
             0%{
                 background-color:#8e0202
@@ -429,6 +547,54 @@
 
         .status-bar {
             grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        }
+
+        /* Debug Performance Panel */
+        #debug-panel {
+            display: none;
+            position: fixed;
+            bottom: 12px;
+            right: 12px;
+            background: rgba(15, 15, 20, 0.92);
+            color: #e0e0e0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            padding: 14px 18px;
+            border-radius: 10px;
+            z-index: 9999;
+            min-width: 260px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(8px);
+        }
+        #debug-panel.visible { display: block; }
+        #debug-panel h4 {
+            margin: 0 0 8px 0;
+            color: #a78bfa;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(255,255,255,0.15);
+            padding-bottom: 6px;
+        }
+        #debug-panel .perf-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+        #debug-panel .perf-label { color: #999; }
+        #debug-panel .perf-val { font-weight: bold; }
+        .perf-green { color: #4ade80; }
+        .perf-yellow { color: #fbbf24; }
+        .perf-red { color: #f87171; }
+        #debug-panel .perf-divider {
+            height: 1px;
+            background: rgba(255,255,255,0.1);
+            margin: 6px 0;
+        }
+        #debug-panel .perf-hint {
+            color: #666;
+            font-size: 10px;
+            text-align: center;
+            margin-top: 8px;
         }
     </style>
 </head>
@@ -631,7 +797,87 @@
         // Auto updates
         setInterval(updateStatus, 1500);
         updateStatus();
+
+        // ===== DEBUG PERFORMANCE PANEL =====
+        let debugVisible = false;
+        let debugInterval = null;
+        let clientFrameCount = 0;
+        let clientFpsLastTime = performance.now();
+        let clientFps = 0;
+
+        // Track client-side FPS by counting video img loads
+        const videoImg = document.getElementById('video-feed');
+        videoImg.addEventListener('load', () => {
+            clientFrameCount++;
+            const now = performance.now();
+            const elapsed = now - clientFpsLastTime;
+            if (elapsed >= 1000) {
+                clientFps = Math.round(clientFrameCount / (elapsed / 1000));
+                clientFrameCount = 0;
+                clientFpsLastTime = now;
+            }
+        });
+
+        function perfColor(ms, lowThresh, highThresh) {
+            if (ms < lowThresh) return 'perf-green';
+            if (ms < highThresh) return 'perf-yellow';
+            return 'perf-red';
+        }
+
+        function fpsColor(fps) {
+            if (fps >= 24) return 'perf-green';
+            if (fps >= 15) return 'perf-yellow';
+            return 'perf-red';
+        }
+
+        function updateDebugPanel() {
+            const t0 = performance.now();
+            fetch('/debug/perf')
+                .then(r => r.json())
+                .then(d => {
+                    const latency = Math.round(performance.now() - t0);
+                    const panel = document.getElementById('debug-content');
+                    panel.innerHTML = `
+                        <div class="perf-row"><span class="perf-label">Server FPS</span><span class="perf-val ${fpsColor(d.server_fps)}">${d.server_fps}</span></div>
+                        <div class="perf-row"><span class="perf-label">Client FPS</span><span class="perf-val ${fpsColor(clientFps)}">${clientFps}</span></div>
+                        <div class="perf-divider"></div>
+                        <div class="perf-row"><span class="perf-label">Capture</span><span class="perf-val ${perfColor(d.avg_capture_ms, 10, 25)}">${d.avg_capture_ms} ms</span></div>
+                        <div class="perf-row"><span class="perf-label">Detection</span><span class="perf-val ${perfColor(d.avg_detection_ms, 16, 33)}">${d.avg_detection_ms} ms</span></div>
+                        <div class="perf-row"><span class="perf-label">Filter</span><span class="perf-val ${perfColor(d.avg_filter_ms, 5, 15)}">${d.avg_filter_ms} ms</span></div>
+                        <div class="perf-row"><span class="perf-label">Encode</span><span class="perf-val ${perfColor(d.avg_encode_ms, 5, 15)}">${d.avg_encode_ms} ms</span></div>
+                        <div class="perf-divider"></div>
+                        <div class="perf-row"><span class="perf-label">Total/frame</span><span class="perf-val ${perfColor(d.avg_total_ms, 33, 66)}">${d.avg_total_ms} ms</span></div>
+                        <div class="perf-row"><span class="perf-label">Frame size</span><span class="perf-val">${d.frame_size_kb} KB</span></div>
+                        <div class="perf-row"><span class="perf-label">Network</span><span class="perf-val ${perfColor(latency, 50, 150)}">${latency} ms</span></div>
+                        <div class="perf-row"><span class="perf-label">Frames</span><span class="perf-val">${d.frame_count}</span></div>
+                    `;
+                })
+                .catch(() => {});
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+                e.preventDefault();
+                debugVisible = !debugVisible;
+                const panel = document.getElementById('debug-panel');
+                if (debugVisible) {
+                    panel.classList.add('visible');
+                    updateDebugPanel();
+                    debugInterval = setInterval(updateDebugPanel, 500);
+                } else {
+                    panel.classList.remove('visible');
+                    if (debugInterval) { clearInterval(debugInterval); debugInterval = null; }
+                }
+            }
+        });
     </script>
     
+    <!-- Debug Performance Panel (Ctrl+Shift+D to toggle) -->
+    <div id="debug-panel">
+        <h4>⚡ Performance Monitor</h4>
+        <div id="debug-content">Loading...</div>
+        <div class="perf-hint">Ctrl+Shift+D to close</div>
+    </div>
+
 </body>
 </html>
